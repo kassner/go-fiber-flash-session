@@ -2,9 +2,12 @@
 
 This package is build to send the flash messages on the top of Gofiber
 
+> **Note**
+> This is a drop-in replacement for [github.com/sujit-baniya/flash](https://github.com/sujit-baniya/flash) which uses the [Session middleware](https://docs.gofiber.io/api/middleware/session/) instead of cookies.
+
 ## Installation
 The package can be used to validate the data and send flash message to other route.
-> go get github.com/sujit-baniya/flash
+> github.com/kassner/go-fiber-flash-session
 
 
 ## Usage
@@ -14,7 +17,7 @@ package main
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/sujit-baniya/flash"
+	"github.com/kassner/go-fiber-flash-session"
 )
 
 func main() {

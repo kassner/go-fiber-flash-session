@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/sujit-baniya/flash"
+	"github.com/kassner/go-fiber-flash-session"
 )
 
 func main() {

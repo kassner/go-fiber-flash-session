@@ -1,12 +1,10 @@
 package flash
 
 import (
-	"fmt"
-	"net/url"
-	"regexp"
-	"time"
+	"encoding/json"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/session"
 )
 
 type Flash struct {
@@ -15,19 +13,11 @@ type Flash struct {
 }
 
 type Config struct {
-	Name        string    `json:"name"`
-	Value       string    `json:"value"`
-	Path        string    `json:"path"`
-	Domain      string    `json:"domain"`
-	MaxAge      int       `json:"max_age"`
-	Expires     time.Time `json:"expires"`
-	Secure      bool      `json:"secure"`
-	HTTPOnly    bool      `json:"http_only"`
-	SameSite    string    `json:"same_site"`
-	SessionOnly bool      `json:"session_only"`
+	Name string
 }
 
 var DefaultFlash *Flash
+var store *session.Store
 
 func init() {
 	Default(Config{
@@ -35,16 +25,12 @@ func init() {
 	})
 }
 
-var cookieKeyValueParser = regexp.MustCompile("\x00([^:]*):([^\x00]*)\x00")
-
 func Default(config Config) {
 	DefaultFlash = New(config)
 }
 
 func New(config Config) *Flash {
-	if config.SameSite == "" {
-		config.SameSite = "Lax"
-	}
+	store = session.New()
 	return &Flash{
 		config: config,
 		data:   fiber.Map{},
@@ -52,20 +38,40 @@ func New(config Config) *Flash {
 }
 
 func (f *Flash) Get(c *fiber.Ctx) fiber.Map {
-	t := fiber.Map{}
-	f.data = nil
-	cookieValue := c.Cookies(f.config.Name)
-	if cookieValue != "" {
-		parseKeyValueCookie(cookieValue, func(key string, val interface{}) {
-			t[key] = val
-		})
-		f.data = t
+	sess, err := store.Get(c)
+	if err != nil {
+		panic(err)
 	}
-	c.Set("Set-Cookie", f.config.Name+"=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; HttpOnly; SameSite="+f.config.SameSite)
-	if f.data == nil {
+
+	// Get value
+	v := sess.Get(f.config.Name)
+	vString := ""
+	if v != nil {
+		vString = v.(string)
+	}
+	var decoded map[string]interface{}
+	json.Unmarshal([]byte(vString), &decoded)
+
+	if decoded != nil {
+		f.data = decoded
+	} else {
 		f.data = fiber.Map{}
 	}
+
 	return f.data
+}
+
+func (f *Flash) Clear(c *fiber.Ctx) {
+	sess, err := store.Get(c)
+	if err != nil {
+		panic(err)
+	}
+
+	sess.Set(f.config.Name, "")
+
+	if err := sess.Save(); err != nil {
+		panic(err)
+	}
 }
 
 func (f *Flash) Redirect(c *fiber.Ctx, location string, data interface{}, status ...int) error {
@@ -121,51 +127,55 @@ func (f *Flash) WithInfo(c *fiber.Ctx, data fiber.Map) *fiber.Ctx {
 
 func (f *Flash) WithData(c *fiber.Ctx, data fiber.Map) *fiber.Ctx {
 	f.data = data
-	f.setCookie(c)
+	f.setSession(c)
 	return c
 }
 
 func (f *Flash) error(c *fiber.Ctx) {
 	f.data["error"] = true
-	f.setCookie(c)
+	f.setSession(c)
 }
 
 func (f *Flash) success(c *fiber.Ctx) {
 	f.data["success"] = true
-	f.setCookie(c)
+	f.setSession(c)
 }
 
 func (f *Flash) warn(c *fiber.Ctx) {
 	f.data["warn"] = true
-	f.setCookie(c)
+	f.setSession(c)
 }
 
 func (f *Flash) info(c *fiber.Ctx) {
 	f.data["info"] = true
-	f.setCookie(c)
+	f.setSession(c)
 }
 
-func (f *Flash) setCookie(c *fiber.Ctx) {
-	var flashValue string
-	for key, value := range f.data {
-		flashValue += "\x00" + key + ":" + fmt.Sprintf("%v", value) + "\x00"
+func (f *Flash) setSession(c *fiber.Ctx) {
+	sess, err := store.Get(c)
+	if err != nil {
+		panic(err)
 	}
-	c.Cookie(&fiber.Cookie{
-		Name:        f.config.Name,
-		Value:       url.QueryEscape(flashValue),
-		SameSite:    f.config.SameSite,
-		Secure:      f.config.Secure,
-		Path:        f.config.Path,
-		Domain:      f.config.Domain,
-		MaxAge:      f.config.MaxAge,
-		Expires:     f.config.Expires,
-		HTTPOnly:    f.config.HTTPOnly,
-		SessionOnly: f.config.SessionOnly,
-	})
+
+	encoded, err := json.Marshal(f.data)
+	if err != nil {
+		panic(err)
+	}
+
+	sess.Set(f.config.Name, string(encoded))
+
+	// Save session
+	if err := sess.Save(); err != nil {
+		panic(err)
+	}
 }
 
 func Get(c *fiber.Ctx) fiber.Map {
 	return DefaultFlash.Get(c)
+}
+
+func Clear(c *fiber.Ctx) {
+	DefaultFlash.Clear(c)
 }
 
 func Redirect(c *fiber.Ctx, location string, data interface{}, status ...int) error {
@@ -198,14 +208,4 @@ func WithInfo(c *fiber.Ctx, data fiber.Map) *fiber.Ctx {
 
 func WithData(c *fiber.Ctx, data fiber.Map) *fiber.Ctx {
 	return DefaultFlash.WithData(c, data)
-}
-
-// parseKeyValueCookie takes the raw (escaped) cookie value and parses out key values.
-func parseKeyValueCookie(val string, cb func(key string, val interface{})) {
-	val, _ = url.QueryUnescape(val)
-	if matches := cookieKeyValueParser.FindAllStringSubmatch(val, -1); matches != nil {
-		for _, match := range matches {
-			cb(match[1], match[2])
-		}
-	}
 }
